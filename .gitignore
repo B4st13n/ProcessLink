@@ -1,3 +1,15 @@
+# Process output should not be committed
+bin/
+obj/
+publish/
+out/
+
+# IDE
+.vs/
+.vscode/
+*.user
+
+# Python leftovers (the app is C#/.NET now)
 __pycache__/
 *.py[cod]
 .pytest_cache/

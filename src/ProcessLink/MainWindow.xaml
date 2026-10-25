@@ -1,0 +1,198 @@
+<Window x:Class="ProcessLink.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ProcessLink" Width="1180" Height="720" MinWidth="880" MinHeight="480"
+        WindowStartupLocation="CenterScreen"
+        FontFamily="Segoe UI" FontSize="13">
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="*"/>
+            <ColumnDefinition Width="400"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- The ONE list: all running processes, pinned ones kept on top. Full window height. -->
+        <DataGrid Grid.Column="0"
+                  ItemsSource="{Binding Rows}"
+                  SelectedItem="{Binding SelectedRow}"
+                  AutoGenerateColumns="False"
+                  IsReadOnly="True"
+                  SelectionMode="Single"
+                  SelectionUnit="FullRow"
+                  HeadersVisibility="Column"
+                  GridLinesVisibility="Horizontal"
+                  CanUserSortColumns="False"
+                  CanUserAddRows="False"
+                  EnableRowVirtualization="True"
+                  RowHeaderWidth="0"
+                  VirtualizingPanel.VirtualizationMode="Recycling">
+            <DataGrid.RowStyle>
+                <Style TargetType="DataGridRow">
+                    <Setter Property="FontWeight" Value="{Binding IsPinnedFontWeight}"/>
+                </Style>
+            </DataGrid.RowStyle>
+            <DataGrid.Columns>
+                <DataGridTemplateColumn Width="56" Header="Pin">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <Button Content="{Binding PinButtonText}"
+                                    Command="{Binding DataContext.TogglePinCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                    CommandParameter="{Binding}"
+                                    Padding="5,1" Margin="3,0" FontSize="11"
+                                    ToolTip="Pin this process to the top of the list (kept even when not running)"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTemplateColumn Width="36" Header="Live">
+                    <DataGridTemplateColumn.CellTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding LiveIndicator}"
+                                       Foreground="{Binding LiveColor}"
+                                       HorizontalAlignment="Center" FontSize="13"
+                                       ToolTip="Green dot = process is running right now"/>
+                        </DataTemplate>
+                    </DataGridTemplateColumn.CellTemplate>
+                </DataGridTemplateColumn>
+                <DataGridTextColumn Header="Process" Binding="{Binding Name}" Width="230"/>
+                <DataGridTextColumn Header="PID" Binding="{Binding Pid}" Width="72">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="HorizontalAlignment" Value="Right"/>
+                            <Setter Property="Margin" Value="0,0,8,0"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+                <DataGridTextColumn Header="Path" Binding="{Binding Path}" Width="*">
+                    <DataGridTextColumn.ElementStyle>
+                        <Style TargetType="TextBlock">
+                            <Setter Property="TextTrimming" Value="CharacterEllipsis"/>
+                            <Setter Property="ToolTip" Value="{Binding Path}"/>
+                        </Style>
+                    </DataGridTextColumn.ElementStyle>
+                </DataGridTextColumn>
+            </DataGrid.Columns>
+        </DataGrid>
+
+        <!-- Right panel: selected process + its start/stop events. -->
+        <Border Grid.Column="1" Background="#FFF7F7F7" BorderBrush="#FFD0D0D0" BorderThickness="1,0,0,0">
+            <Grid Margin="12">
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Selected process -->
+                <Grid Grid.Row="0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                        <TextBlock Text="SELECTED PROCESS" FontSize="10" Foreground="#FF777777" FontWeight="SemiBold"/>
+                        <TextBlock Text="{Binding SelectedProcessName}" FontSize="15" FontWeight="Bold"
+                                   TextTrimming="CharacterEllipsis" ToolTip="{Binding SelectedProcessName}"/>
+                    </StackPanel>
+                    <Button Grid.Column="1" Content="Pin / Unpin" VerticalAlignment="Center"
+                            Command="{Binding ToggleSelectedPinCommand}"
+                            IsEnabled="{Binding HasSelection}" Padding="8,3"/>
+                </Grid>
+
+                <!-- Events header -->
+                <Grid Grid.Row="1" Margin="0,14,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="START / STOP EVENTS" FontSize="10" Foreground="#FF777777"
+                               FontWeight="SemiBold" VerticalAlignment="Center"/>
+                    <Button Grid.Column="1" Content="Add event" Command="{Binding AddEventCommand}"
+                            Padding="8,2" Margin="0,0,6,0" FontSize="11"/>
+                    <Button Grid.Column="2" Content="Delete event" Command="{Binding DeleteEventCommand}"
+                            Padding="8,2" FontSize="11"/>
+                </Grid>
+
+                <!-- Events list -->
+                <DataGrid Grid.Row="2" Height="104"
+                          ItemsSource="{Binding Events}"
+                          SelectedItem="{Binding SelectedEvent}"
+                          AutoGenerateColumns="False"
+                          SelectionMode="Single"
+                          HeadersVisibility="Column"
+                          GridLinesVisibility="Horizontal"
+                          CanUserAddRows="False">
+                    <DataGrid.Columns>
+                        <DataGridTextColumn Header="Event" Binding="{Binding Name, UpdateSourceTrigger=PropertyChanged}" Width="*"/>
+                        <DataGridCheckBoxColumn Header="Enabled" Binding="{Binding Enabled, UpdateSourceTrigger=PropertyChanged}" Width="66"/>
+                    </DataGrid.Columns>
+                </DataGrid>
+
+                <!-- Event editor -->
+                <Grid Grid.Row="3" Margin="0,10,0,0" IsEnabled="{Binding HasSelectedEvent}">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Row="0" Grid.Column="0" Text="Event name" FontSize="11" Foreground="#FF555555"/>
+                    <CheckBox Grid.Row="0" Grid.Column="1" Content="Enabled" VerticalAlignment="Center"
+                              IsChecked="{Binding SelectedEvent.Enabled, UpdateSourceTrigger=PropertyChanged}"/>
+
+                    <TextBox Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,3,0,8"
+                             Text="{Binding SelectedEvent.Name, UpdateSourceTrigger=PropertyChanged}"/>
+
+                    <TextBlock Grid.Row="2" Grid.Column="0" Grid.ColumnSpan="2"
+                               Text="Start commands (one per line — run when the process appears)"
+                               FontSize="11" Foreground="#FF555555"/>
+                    <TextBox Grid.Row="3" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,3,0,8"
+                             AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas" FontSize="12"
+                             Text="{Binding SelectedEvent.StartCommandsText, UpdateSourceTrigger=PropertyChanged}"/>
+
+                    <TextBlock Grid.Row="4" Grid.Column="0" Grid.ColumnSpan="2"
+                               Text="Stop commands (one per line — run when the process disappears)"
+                               FontSize="11" Foreground="#FF555555"/>
+                    <TextBox Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="2" Margin="0,3,0,0"
+                             AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"
+                             FontFamily="Consolas" FontSize="12"
+                             Text="{Binding SelectedEvent.StopCommandsText, UpdateSourceTrigger=PropertyChanged}"/>
+                </Grid>
+
+                <!-- Options -->
+                <Grid Grid.Row="4" Margin="0,12,0,4">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="60"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <TextBlock Grid.Column="0" Text="Poll (s)" VerticalAlignment="Center" FontSize="11" Foreground="#FF555555"/>
+                    <TextBox Grid.Column="1" Margin="6,0" VerticalAlignment="Center"
+                             Text="{Binding PollIntervalText, UpdateSourceTrigger=PropertyChanged}"/>
+                    <TextBlock Grid.Column="2" Text="seconds" VerticalAlignment="Center" FontSize="11" Foreground="#FF555555"/>
+                </Grid>
+                <StackPanel Grid.Row="5" Orientation="Horizontal" Margin="0,0,0,6">
+                    <Button Content="Save" Command="{Binding SaveConfigCommand}" Padding="12,3" Margin="0,0,6,0" FontWeight="SemiBold"/>
+                    <Button Content="Reload config" Command="{Binding ReloadConfigCommand}" Padding="12,3" Margin="0,0,6,0"/>
+                    <Button Content="Clear log" Command="{Binding ClearLogCommand}" Padding="12,3"/>
+                </StackPanel>
+
+                <!-- Status -->
+                <TextBlock Grid.Row="6" Text="{Binding StatusText}" FontSize="11" Foreground="#FF777777"
+                           TextWrapping="Wrap"/>
+            </Grid>
+        </Border>
+    </Grid>
+</Window>
