@@ -1,0 +1,112 @@
+# Auto RELEASE on push to main; RC on PR.
+# Hypotheses: csproj already sets PublishSingleFile/self-contained win-x64; Version 0.2.0 / tag v0.2.0 → next patch.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: read
+  pull-requests: read
+
+jobs:
+  deploy:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute version
+        id: ver
+        shell: pwsh
+        run: |
+          git fetch --tags --force 2>$null | Out-Null
+          $tags = git tag -l "v*.*.*" --sort=-v:refname
+          $last = $null
+          foreach ($t in $tags) {
+            if ($t -match '^v(\d+)\.(\d+)\.(\d+)$') { $last = $t; break }
+          }
+          if (-not $last) { $last = "v0.2.0" }
+          if ($last -match '^v(\d+)\.(\d+)\.(\d+)$') {
+            $maj=[int]$Matches[1]; $min=[int]$Matches[2]; $pat=[int]$Matches[3]
+          } else { $maj=0; $min=0; $pat=0 }
+
+          $isPr = "${{ github.event_name }}" -eq "pull_request"
+          # Always advance patch for the next candidate/release from last stable tag
+          $pat = $pat + 1
+          if ($isPr) {
+            $candidate = "v$maj.$min.$pat"
+            $rc = "${{ github.event.pull_request.number }}"
+            if (-not $rc) { $rc = "${{ github.run_number }}" }
+            $version = "$candidate-rc.$rc"
+            $tag = $version
+            $isRelease = "false"
+          } else {
+            $version = "v$maj.$min.$pat"
+            # Skip tags that already exist
+            while (git rev-parse -q --verify "refs/tags/$version" 2>$null) {
+              $pat = $pat + 1
+              $version = "v$maj.$min.$pat"
+            }
+            $tag = $version
+            $isRelease = "true"
+          }
+          $plain = $version.TrimStart('v')
+          "VERSION=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "TAG=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "PLAIN=$plain" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "IS_RELEASE=$isRelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Computed VERSION=$version IS_RELEASE=$isRelease (last=$last)"
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Publish
+        shell: pwsh
+        run: |
+          $plain = "${{ steps.ver.outputs.PLAIN }}"
+          New-Item -ItemType Directory -Force -Path dist, publish | Out-Null
+          dotnet restore ProcessLink.sln
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          dotnet publish src/ProcessLink/ProcessLink.csproj -c Release -r win-x64 --self-contained true `
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
+            -p:Version=$plain -o publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $exe = Get-ChildItem publish -Filter ProcessLink.exe | Select-Object -First 1
+          if (-not $exe) { $exe = Get-ChildItem publish -Filter *.exe | Select-Object -First 1 }
+          Copy-Item $exe.FullName "dist/ProcessLink-v$plain-win-x64.exe" -Force
+          Compress-Archive -Path "dist/ProcessLink-v$plain-win-x64.exe" -DestinationPath "ProcessLink-v$plain.zip" -Force
+
+      - name: Upload Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ProcessLink-${{ steps.ver.outputs.VERSION }}
+          path: |
+            dist/*.exe
+            ProcessLink-v${{ steps.ver.outputs.PLAIN }}.zip
+          if-no-files-found: error
+          retention-days: ${{ github.event_name == 'pull_request' && 14 || 90 }}
+
+      - name: Create tag and GitHub Release
+        if: steps.ver.outputs.IS_RELEASE == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.TAG }}
+          name: ProcessLink ${{ steps.ver.outputs.VERSION }}
+          body: |
+            Automated RELEASE from `${{ github.ref_name }}` @ `${{ github.sha }}`.
+            Self-contained win-x64 tray app.
+          files: |
+            dist/*.exe
+            ProcessLink-v${{ steps.ver.outputs.PLAIN }}.zip
+          draft: false
+          prerelease: false
+          generate_release_notes: true
