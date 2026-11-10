@@ -96,24 +96,24 @@ jobs:
         run: |
           $plain = "${{ steps.ver.outputs.PLAIN }}"
           New-Item -ItemType Directory -Force -Path dist, publish | Out-Null
-          dotnet restore ProcessLink.sln
+          dotnet restore Spawn.sln
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          dotnet publish src/ProcessLink/ProcessLink.csproj -c Release -r win-x64 --self-contained true `
+          dotnet publish src/Spawn/Spawn.csproj -c Release -r win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
             -p:Version=$plain -o publish
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $exe = Get-ChildItem publish -Filter ProcessLink.exe | Select-Object -First 1
+          $exe = Get-ChildItem publish -Filter Spawn.exe | Select-Object -First 1
           if (-not $exe) { $exe = Get-ChildItem publish -Filter *.exe | Select-Object -First 1 }
-          Copy-Item $exe.FullName "dist/ProcessLink-v$plain-win-x64.exe" -Force
-          Compress-Archive -Path "dist/ProcessLink-v$plain-win-x64.exe" -DestinationPath "ProcessLink-v$plain.zip" -Force
+          Copy-Item $exe.FullName "dist/Spawn-v$plain-win-x64.exe" -Force
+          Compress-Archive -Path "dist/Spawn-v$plain-win-x64.exe" -DestinationPath "Spawn-v$plain.zip" -Force
 
       - name: Upload Actions artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ProcessLink-${{ steps.ver.outputs.VERSION }}
+          name: Spawn-${{ steps.ver.outputs.VERSION }}
           path: |
             dist/*.exe
-            ProcessLink-v${{ steps.ver.outputs.PLAIN }}.zip
+            Spawn-v${{ steps.ver.outputs.PLAIN }}.zip
           if-no-files-found: error
           retention-days: ${{ github.event_name == 'pull_request' && 14 || 90 }}
 
@@ -122,13 +122,13 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.TAG }}
-          name: ProcessLink ${{ steps.ver.outputs.VERSION }}
+          name: Spawn ${{ steps.ver.outputs.VERSION }}
           body: |
             Automated RELEASE from `${{ github.ref_name }}` @ `${{ github.sha }}`.
             Self-contained win-x64 tray app.
           files: |
             dist/*.exe
-            ProcessLink-v${{ steps.ver.outputs.PLAIN }}.zip
+            Spawn-v${{ steps.ver.outputs.PLAIN }}.zip
           draft: false
           prerelease: false
           generate_release_notes: true

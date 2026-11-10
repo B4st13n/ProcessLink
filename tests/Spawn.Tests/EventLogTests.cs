@@ -1,7 +1,7 @@
 using Xunit;
-using ProcessLink.Services;
+using Spawn.Services;
 
-namespace ProcessLink.Tests;
+namespace Spawn.Tests;
 
 public sealed class EventLogTests : IDisposable
 {
@@ -10,7 +10,7 @@ public sealed class EventLogTests : IDisposable
 
     public EventLogTests()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "ProcessLinkTests_" + Guid.NewGuid().ToString("N"));
+        _dir = Path.Combine(Path.GetTempPath(), "SpawnTests_" + Guid.NewGuid().ToString("N"));
         _logPath = Path.Combine(_dir, "events.log");
     }
 

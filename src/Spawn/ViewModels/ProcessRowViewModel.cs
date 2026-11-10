@@ -2,7 +2,7 @@ using System.ComponentModel;
 using System.Windows.Input;
 using System.Windows.Media;
 
-namespace ProcessLink.ViewModels;
+namespace Spawn.ViewModels;
 
 /// <summary>One row of the single process list: a pinned process or a running process.</summary>
 public sealed class ProcessRowViewModel : INotifyPropertyChanged

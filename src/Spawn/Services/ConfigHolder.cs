@@ -1,6 +1,6 @@
-using ProcessLink.Models;
+using Spawn.Models;
 
-namespace ProcessLink.Services;
+namespace Spawn.Services;
 
 /// <summary>Holds the live config so the monitor and the view model share one instance.</summary>
 public sealed class ConfigHolder

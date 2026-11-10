@@ -1,7 +1,7 @@
 using System.Diagnostics;
-using ProcessLink.Models;
+using Spawn.Models;
 
-namespace ProcessLink.Services;
+namespace Spawn.Services;
 
 /// <summary>A running process as seen by the monitor.</summary>
 public sealed record ProcessSnapshot(string Name, int Id, string? Path);

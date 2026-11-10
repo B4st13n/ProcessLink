@@ -1,6 +1,6 @@
 using System.Text.Json.Serialization;
 
-namespace ProcessLink.Models;
+namespace Spawn.Models;
 
 /// <summary>A start/stop command association for a watched process.</summary>
 public sealed class GameEventConfig : System.ComponentModel.INotifyPropertyChanged

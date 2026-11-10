@@ -1,7 +1,8 @@
 using Xunit;
 
-namespace ProcessLink.Tests;
+namespace Spawn.Tests;
 
+/// <summary>The tray icon is drawn at runtime: a blue disc with a white "S".</summary>
 public sealed class TrayIconFactoryTests
 {
     [Fact]

@@ -1,10 +1,10 @@
-namespace ProcessLink.Models;
+namespace Spawn.Models;
 
 /// <summary>
 /// Process-name helpers. Windows reports process image names with the extension
 /// (e.g. "eldenring.exe", as psutil did in the Python app), but
 /// System.Diagnostics.Process.ProcessName strips ".exe". All comparisons in
-/// ProcessLink are therefore extension-insensitive so configs written for
+/// Spawn are therefore extension-insensitive so configs written for
 /// "game.exe" match a process reported as "game".
 /// </summary>
 public static class ProcessNames

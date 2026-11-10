@@ -1,9 +1,9 @@
 using Xunit;
-using ProcessLink.Models;
-using ProcessLink.Services;
-using ProcessLink.ViewModels;
+using Spawn.Models;
+using Spawn.Services;
+using Spawn.ViewModels;
 
-namespace ProcessLink.Tests;
+namespace Spawn.Tests;
 
 /// <summary>Tests the single process list: pinned on top, live flags, pin persistence.</summary>
 public sealed class MainViewModelTests : IDisposable
@@ -13,7 +13,7 @@ public sealed class MainViewModelTests : IDisposable
 
     public MainViewModelTests()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "ProcessLinkTests_" + Guid.NewGuid().ToString("N"));
+        _dir = Path.Combine(Path.GetTempPath(), "SpawnTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
         _configPath = Path.Combine(_dir, "config.json");
     }

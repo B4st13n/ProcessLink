@@ -9,9 +9,9 @@ using Color = System.Drawing.Color;
 using FontStyle = System.Drawing.FontStyle;
 using StringFormat = System.Drawing.StringFormat;
 
-namespace ProcessLink;
+namespace Spawn;
 
-/// <summary>Generates the ProcessLink icon at runtime (blue disc with a white "P") — no asset files needed.</summary>
+/// <summary>Generates the Spawn icon at runtime (blue disc with a white "S") — no asset files needed.</summary>
 public static class TrayIconFactory
 {
     public static Icon CreateIcon()
@@ -32,7 +32,7 @@ public static class TrayIconFactory
                     Alignment = StringAlignment.Center,
                     LineAlignment = StringAlignment.Center,
                 };
-                graphics.DrawString("P", font, white, new RectangleF(0, 0, size, size), format);
+                graphics.DrawString("S", font, white, new RectangleF(0, 0, size, size), format);
             }
         }
 

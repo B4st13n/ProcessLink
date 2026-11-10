@@ -1,7 +1,7 @@
-# ProcessLink
+# Spawn
 
 A system-tray process monitor for Windows 10/11, written in C# (.NET 8, WPF).
-ProcessLink continuously watches running processes; when a configured process
+Spawn continuously watches running processes; when a configured process
 appears it launches the associated start commands (exe, AutoHotkey script,
 batch file, any program), and when the process disappears it runs the optional
 stop commands.
@@ -24,11 +24,16 @@ git).
 - The list refreshes automatically (~1.5 s, configurable) — no manual refresh
 - Right panel: select any process to edit its **start/stop events** (name,
   enabled flag, start commands, stop commands)
-- Config persisted as JSON at `%APPDATA%\ProcessLink\config.json`
-  (migrated automatically from `%APPDATA%\GamePadTrigger\config.json` on first run)
-- Timestamped event log at `%APPDATA%\ProcessLink\events.log`
-- Single instance (a second launch brings up a notice)
-- Console/debug mode: `ProcessLink.exe --console` prints appear/disappear
+- Config persisted as JSON at `%APPDATA%\Spawn\config.json`.
+  On first run, if that file is missing, Spawn copies an existing
+  `%APPDATA%\ProcessLink\config.json`, or else
+  `%APPDATA%\GamePadTrigger\config.json`. The older files are left in place.
+- Timestamped event log at `%APPDATA%\Spawn\events.log`
+- Single instance (a second launch brings up a notice). A leftover
+  ProcessLink process that still holds the old single-instance mutex also
+  blocks Spawn from starting, and Spawn keeps that mutex name reserved so the
+  old exe will not start beside it.
+- Console/debug mode: `Spawn.exe --console` prints appear/disappear
   transitions to the console
 
 ## Requirements
@@ -36,21 +41,21 @@ git).
 - Windows 10/11, x64
 - To build: .NET 8 SDK (`dotnet --version` → 8.x)
 - To run the published app: nothing else — the release ships a single-file
-  self-contained `ProcessLink.exe`
+  self-contained `Spawn.exe`
 
 ## Build & run from source
 
 ```powershell
-cd C:\Users\<you>\Projects\ProcessLink
+cd C:\Users\<you>\Projects\Spawn
 
 # Build the app
-dotnet build src\ProcessLink\ProcessLink.csproj -c Release
+dotnet build src\Spawn\Spawn.csproj -c Release
 
 # Run (tray mode)
-dotnet run --project src\ProcessLink\ProcessLink.csproj -c Release
+dotnet run --project src\Spawn\Spawn.csproj -c Release
 
 # Run with console output of appear/disappear transitions (debug)
-dotnet run --project src\ProcessLink\ProcessLink.csproj -c Release -- --console
+dotnet run --project src\Spawn\Spawn.csproj -c Release -- --console
 ```
 
 ## Tests
@@ -60,24 +65,24 @@ dotnet test
 ```
 
 Covers the config JSON roundtrip (including migration from the legacy
-GamePadTrigger config and corrupt/missing-file handling), the timestamped
+ProcessLink and GamePadTrigger configs, and corrupt/missing-file handling), the timestamped
 event log, and the appear/disappear launch/stop logic with a fake process
 source and a mock launcher.
 
 ## Publish (single-file self-contained exe)
 
 ```powershell
-dotnet publish src\ProcessLink\ProcessLink.csproj -c Release -r win-x64 `
+dotnet publish src\Spawn\Spawn.csproj -c Release -r win-x64 `
   --self-contained true -p:PublishSingleFile=true `
   -p:IncludeNativeLibrariesForSelfExtract=true -o .\publish
 ```
 
-The output is `.\publish\ProcessLink.exe` — a single ~170 MB file with the
+The output is `.\publish\Spawn.exe` — a single ~170 MB file with the
 .NET runtime bundled; it runs on any Windows x64 machine with no install.
 
 ## Usage
 
-1. Launch `ProcessLink.exe` — the tray icon appears (no window).
+1. Launch `Spawn.exe` — the tray icon appears (no window).
 2. Left-click the tray icon to open the window.
 3. The left list shows all running processes with a live green dot. Click
    **Pin** on any row to keep it at the top of the list permanently (pinned
@@ -89,7 +94,7 @@ The output is `.\publish\ProcessLink.exe` — a single ~170 MB file with the
    - **Stop commands** — optional, one per line, run when the process
      disappears (e.g. `taskkill /IM helper.exe`)
    - **Add event** / **Delete event** / **Save**
-5. The config is written to `%APPDATA%\ProcessLink\config.json` and applied
+5. The config is written to `%APPDATA%\Spawn\config.json` and applied
    immediately (no restart).
 
 Tray menu: **Open**, **Reload config** (re-read the JSON from disk),
@@ -98,7 +103,7 @@ Closing the window hides it to the tray; **Quit** exits for real.
 
 ## Configuration format
 
-`%APPDATA%\ProcessLink\config.json`:
+`%APPDATA%\Spawn\config.json`:
 
 ```json
 {
@@ -135,15 +140,18 @@ Closing the window hides it to the tray; **Quit** exits for real.
 - Commands run through `cmd.exe` detached, without opening a console window,
   so they can be any program: `.exe`, `.bat`, `.ahk` (quoted, with the
   AutoHotkey interpreter), etc.
-- A process that is already running when ProcessLink starts counts as
+- A process that is already running when Spawn starts counts as
   "appeared" and fires its start commands on the first poll.
-- On first run, an existing `%APPDATA%\GamePadTrigger\config.json` (the
-  Python app's config) is loaded and copied to the new location — games and
-  events are preserved.
+- On first run, config is loaded from the first file that exists and parses:
+  `%APPDATA%\Spawn\config.json`, then `%APPDATA%\ProcessLink\config.json`, then
+  `%APPDATA%\GamePadTrigger\config.json` (the Python app). A legacy file is
+  copied to the Spawn location — games and events are preserved — and the
+  older file is left in place. A corrupt legacy file is skipped so an older
+  valid config can still be migrated.
 
 ## Event log format
 
-`%APPDATA%\ProcessLink\events.log`, one line per action:
+`%APPDATA%\Spawn\events.log`, one line per action:
 
 ```
 2026-10-25 14:03:12 | process=eldenring.exe | action=START | command="C:\Program Files\AutoHotkey\AutoHotkey.exe" "D:\Scripts\eldenring.ahk"
@@ -153,17 +161,17 @@ Closing the window hides it to the tray; **Quit** exits for real.
 ## Project layout
 
 ```
-ProcessLink.sln
-src/ProcessLink/              WPF app (net8.0-windows)
+Spawn.sln
+src/Spawn/              WPF app (net8.0-windows)
   App.xaml(.cs)               startup, tray icon, single instance, console mode
   MainWindow.xaml(.cs)        the single full-height process list + events panel
   Models/Config.cs            AppConfig / GameConfig / GameEventConfig / PinnedProcessConfig
   Services/
-    AppPaths.cs               %APPDATA%\ProcessLink locations (+ legacy GamePadTrigger path)
+    AppPaths.cs               %APPDATA%\Spawn locations (+ legacy ProcessLink and GamePadTrigger paths)
     ConfigService.cs          JSON load/save + legacy migration
     ProcessMonitor.cs         polling loop + appear/disappear detection
     CommandLauncher.cs        detached command launching via cmd.exe
     EventLog.cs               timestamped event log (write/read/clear)
   ViewModels/                 MainViewModel (list, pinning, sorting) + row view model
-tests/ProcessLink.Tests/      xUnit tests (config roundtrip, monitor logic, event log)
+tests/Spawn.Tests/      xUnit tests (config roundtrip, monitor logic, event log)
 ```

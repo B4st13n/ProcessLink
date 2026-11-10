@@ -2,10 +2,10 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Windows.Input;
 using System.Windows.Threading;
-using ProcessLink.Models;
-using ProcessLink.Services;
+using Spawn.Models;
+using Spawn.Services;
 
-namespace ProcessLink.ViewModels;
+namespace Spawn.ViewModels;
 
 public sealed class MainViewModel : INotifyPropertyChanged, IDisposable
 {
