@@ -1,6 +1,6 @@
 using System.Diagnostics;
 
-namespace ProcessLink.Services;
+namespace Spawn.Services;
 
 public interface ICommandLauncher
 {

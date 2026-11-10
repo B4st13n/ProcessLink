@@ -1,7 +1,7 @@
-<Window x:Class="ProcessLink.MainWindow"
+<Window x:Class="Spawn.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="ProcessLink" Width="1180" Height="720" MinWidth="880" MinHeight="480"
+        Title="Spawn" Width="1180" Height="720" MinWidth="880" MinHeight="480"
         WindowStartupLocation="CenterScreen"
         FontFamily="Segoe UI" FontSize="13">
     <Grid>

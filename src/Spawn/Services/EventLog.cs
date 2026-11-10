@@ -1,12 +1,12 @@
 using System.IO;
-namespace ProcessLink.Services;
+namespace Spawn.Services;
 
 public interface IEventSink
 {
     void Log(string processName, string action, string detail);
 }
 
-/// <summary>Timestamped append-only event log at %APPDATA%\ProcessLink\events.log.</summary>
+/// <summary>Timestamped append-only event log at %APPDATA%\Spawn\events.log.</summary>
 public sealed class FileEventSink : IEventSink
 {
     private readonly string _path;

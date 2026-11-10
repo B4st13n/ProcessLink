@@ -1,21 +1,23 @@
 using Xunit;
-using ProcessLink.Models;
-using ProcessLink.Services;
+using Spawn.Models;
+using Spawn.Services;
 
-namespace ProcessLink.Tests;
+namespace Spawn.Tests;
 
 public sealed class ConfigServiceTests : IDisposable
 {
     private readonly string _dir;
     private readonly string _configPath;
-    private readonly string _legacyPath;
+    private readonly string _processLinkPath;
+    private readonly string _gamePadPath;
 
     public ConfigServiceTests()
     {
-        _dir = Path.Combine(Path.GetTempPath(), "ProcessLinkTests_" + Guid.NewGuid().ToString("N"));
+        _dir = Path.Combine(Path.GetTempPath(), "SpawnTests_" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(_dir);
-        _configPath = Path.Combine(_dir, "ProcessLink", "config.json");
-        _legacyPath = Path.Combine(_dir, "GamePadTrigger", "config.json");
+        _configPath = Path.Combine(_dir, "Spawn", "config.json");
+        _processLinkPath = Path.Combine(_dir, "ProcessLink", "config.json");
+        _gamePadPath = Path.Combine(_dir, "GamePadTrigger", "config.json");
     }
 
     public void Dispose()
@@ -23,7 +25,7 @@ public sealed class ConfigServiceTests : IDisposable
         try { Directory.Delete(_dir, recursive: true); } catch { }
     }
 
-    private ConfigService CreateService() => new(_configPath, _legacyPath);
+    private ConfigService CreateService() => new(_configPath, _processLinkPath, _gamePadPath);
 
     [Fact]
     public void Load_MissingFile_ReturnsDefaults()
@@ -148,7 +150,26 @@ public sealed class ConfigServiceTests : IDisposable
     }
 
     [Fact]
-    public void Load_LegacyGamePadTriggerJson_IsMigratedAndCopiedToNewPath()
+    public void Load_LegacyProcessLinkJson_IsMigratedAndPreferredOverGamePadTrigger()
+    {
+        WriteLegacy(_processLinkPath, "processlink.exe", 2.5);
+        WriteLegacy(_gamePadPath, "gamepad.exe", 1.0);
+
+        var config = CreateService().Load();
+
+        Assert.Equal(2.5, config.PollInterval);
+        Assert.Equal("processlink.exe", Assert.Single(config.Games).ProcessName);
+
+        Assert.True(File.Exists(_configPath));
+        Assert.True(File.Exists(_processLinkPath));
+        Assert.True(File.Exists(_gamePadPath));
+
+        var reloaded = CreateService().Load();
+        Assert.Equal("processlink.exe", Assert.Single(reloaded.Games).ProcessName);
+    }
+
+    [Fact]
+    public void Load_LegacyGamePadTriggerJson_IsMigratedWhenProcessLinkIsAbsent()
     {
         // The exact shape produced by the previous Python app.
         var legacyJson = """
@@ -169,8 +190,8 @@ public sealed class ConfigServiceTests : IDisposable
           ]
         }
         """;
-        Directory.CreateDirectory(Path.GetDirectoryName(_legacyPath)!);
-        File.WriteAllText(_legacyPath, legacyJson);
+        Directory.CreateDirectory(Path.GetDirectoryName(_gamePadPath)!);
+        File.WriteAllText(_gamePadPath, legacyJson);
 
         var config = CreateService().Load();
 
@@ -182,19 +203,37 @@ public sealed class ConfigServiceTests : IDisposable
         Assert.Equal("taskkill /IM helper.exe", Assert.Single(gameEvent.StopCommands));
         Assert.Empty(config.Pinned);
 
-        // Migration: the config now also exists at the new ProcessLink path.
+        // Migration copies into the Spawn path and leaves the legacy file in place.
         Assert.True(File.Exists(_configPath));
+        Assert.True(File.Exists(_gamePadPath));
         var reloaded = CreateService().Load();
         Assert.Equal("eldenring.exe", Assert.Single(reloaded.Games).ProcessName);
     }
 
     [Fact]
-    public void Load_NewPathWins_OverLegacyPath()
+    public void Load_CorruptProcessLinkLegacy_FallsThroughToGamePadTrigger()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_processLinkPath)!);
+        File.WriteAllText(_processLinkPath, "{ this is not json !!!");
+        WriteLegacy(_gamePadPath, "gamepad.exe", 3.0);
+
+        var config = CreateService().Load();
+
+        Assert.Equal(3.0, config.PollInterval);
+        Assert.Equal("gamepad.exe", Assert.Single(config.Games).ProcessName);
+        Assert.True(File.Exists(_configPath));
+        Assert.True(File.Exists(_processLinkPath));
+    }
+
+    [Fact]
+    public void Load_SpawnPathWins_OverLegacyPaths()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_configPath)!);
-        Directory.CreateDirectory(Path.GetDirectoryName(_legacyPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(_processLinkPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(_gamePadPath)!);
         File.WriteAllText(_configPath, """{"poll_interval": 9.0, "games": [], "pinned": []}""");
-        File.WriteAllText(_legacyPath, """{"poll_interval": 1.0, "games": [{"process_name": "legacy.exe", "events": []}], "pinned": []}""");
+        File.WriteAllText(_processLinkPath, """{"poll_interval": 4.0, "games": [{"process_name": "processlink.exe", "events": []}], "pinned": []}""");
+        File.WriteAllText(_gamePadPath, """{"poll_interval": 1.0, "games": [{"process_name": "legacy.exe", "events": []}], "pinned": []}""");
 
         var config = CreateService().Load();
 
@@ -229,5 +268,19 @@ public sealed class ConfigServiceTests : IDisposable
 
         Assert.Same(first, second);
         Assert.Single(config.Games);
+    }
+
+    private static void WriteLegacy(string path, string processName, double pollInterval)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, $$"""
+        {
+          "poll_interval": {{pollInterval.ToString(System.Globalization.CultureInfo.InvariantCulture)}},
+          "games": [
+            { "process_name": "{{processName}}", "events": [] }
+          ],
+          "pinned": []
+        }
+        """);
     }
 }

@@ -1,8 +1,8 @@
 using System.ComponentModel;
 using System.Windows;
-using ProcessLink.ViewModels;
+using Spawn.ViewModels;
 
-namespace ProcessLink;
+namespace Spawn;
 
 public partial class MainWindow : Window
 {

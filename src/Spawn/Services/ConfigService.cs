@@ -1,12 +1,13 @@
 using System.IO;
 using System.Text.Json;
-using ProcessLink.Models;
+using Spawn.Models;
 
-namespace ProcessLink.Services;
+namespace Spawn.Services;
 
 /// <summary>
 /// Loads/saves the JSON config. Keeps the GamePadTrigger (Python) snake_case format
-/// and migrates a legacy config file to the new ProcessLink location on first run.
+/// and migrates a legacy config into the Spawn location on first run.
+/// Legacy search order is ProcessLink, then GamePadTrigger.
 /// </summary>
 public sealed class ConfigService
 {
@@ -16,29 +17,44 @@ public sealed class ConfigService
     };
 
     private readonly string _configPath;
-    private readonly string? _legacyConfigPath;
+    private readonly IReadOnlyList<string> _legacyConfigPaths;
 
-    public ConfigService(string? configPath = null, string? legacyConfigPath = null)
+    /// <param name="configPath">Destination config. Defaults to %AppData%\Spawn\config.json.</param>
+    /// <param name="legacyConfigPaths">
+    /// Ordered legacy sources. The first existing file that parses is migrated.
+    /// When omitted, the order is ProcessLink, then GamePadTrigger.
+    /// </param>
+    public ConfigService(string? configPath = null, params string[] legacyConfigPaths)
     {
         _configPath = configPath ?? AppPaths.ConfigPath;
-        _legacyConfigPath = legacyConfigPath ?? AppPaths.LegacyConfigPath;
+        _legacyConfigPaths = legacyConfigPaths is { Length: > 0 }
+            ? legacyConfigPaths.Where(static path => !string.IsNullOrWhiteSpace(path)).ToArray()
+            : AppPaths.LegacyConfigPaths;
     }
 
     public string ConfigPath => _configPath;
 
     /// <summary>
-    /// Loads the config. If the new config file does not exist but a legacy
-    /// GamePadTrigger config does, it is loaded and migrated (written to the new path).
-    /// A missing or corrupt file yields a default config.
+    /// Loads the config. An existing Spawn file wins (a corrupt Spawn file yields
+    /// defaults and does not fall through). Otherwise the first legacy file that
+    /// exists and parses is copied to the Spawn path. A corrupt legacy file is
+    /// skipped so an older valid config is not discarded. A missing file yields
+    /// a default config. Legacy files are not deleted.
     /// </summary>
     public AppConfig Load()
     {
         if (File.Exists(_configPath))
             return LoadFile(_configPath) ?? new AppConfig();
 
-        if (_legacyConfigPath != null && File.Exists(_legacyConfigPath))
+        foreach (var legacyPath in _legacyConfigPaths)
         {
-            var migrated = LoadFile(_legacyConfigPath) ?? new AppConfig();
+            if (!File.Exists(legacyPath))
+                continue;
+
+            var migrated = LoadFile(legacyPath);
+            if (migrated == null)
+                continue;
+
             try { Save(migrated); }
             catch { /* migration is best-effort; the in-memory config still works */ }
             return migrated;

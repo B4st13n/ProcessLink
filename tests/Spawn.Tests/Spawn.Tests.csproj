@@ -15,7 +15,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\src\ProcessLink\ProcessLink.csproj" />
+    <ProjectReference Include="..\..\src\Spawn\Spawn.csproj" />
   </ItemGroup>
 
 </Project>

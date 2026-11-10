@@ -1,11 +1,11 @@
 using System.IO;
 using System.Diagnostics;
 using System.Windows;
-using ProcessLink.Services;
-using ProcessLink.ViewModels;
+using Spawn.Services;
+using Spawn.ViewModels;
 using WinForms = System.Windows.Forms;
 
-namespace ProcessLink;
+namespace Spawn;
 
 public partial class App : System.Windows.Application
 {
@@ -13,7 +13,7 @@ public partial class App : System.Windows.Application
     private MainWindow? _window;
     private MainViewModel? _viewModel;
     private ProcessMonitor? _monitor;
-    private Mutex? _singleInstanceMutex;
+    private SingleInstance? _singleInstance;
     private bool _consoleMode;
 
     protected override void OnStartup(StartupEventArgs e)
@@ -24,10 +24,10 @@ public partial class App : System.Windows.Application
         if (_consoleMode)
             NativeMethods.AllocConsole();
 
-        _singleInstanceMutex = new Mutex(true, @"Global\ProcessLink_SingleInstance", out bool createdNew);
-        if (!createdNew)
+        _singleInstance = SingleInstance.TryAcquire();
+        if (_singleInstance == null)
         {
-            System.Windows.MessageBox.Show("ProcessLink is already running.", "ProcessLink",
+            System.Windows.MessageBox.Show("Spawn is already running.", "Spawn",
                 MessageBoxButton.OK, MessageBoxImage.Information);
             Shutdown();
             return;
@@ -65,7 +65,7 @@ public partial class App : System.Windows.Application
         if (!_consoleMode)
             CreateTrayIcon();
         else
-            Console.WriteLine("ProcessLink console mode — no tray icon. Press Ctrl+C or close the window to quit.");
+            Console.WriteLine("Spawn console mode — no tray icon. Press Ctrl+C or close the window to quit.");
     }
 
     private void CreateTrayIcon()
@@ -79,7 +79,7 @@ public partial class App : System.Windows.Application
 
         _notifyIcon = new WinForms.NotifyIcon
         {
-            Text = "ProcessLink",
+            Text = "Spawn",
             Icon = TrayIconFactory.CreateIcon(),
             ContextMenuStrip = menu,
             Visible = true,
@@ -119,7 +119,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex)
         {
-            System.Windows.MessageBox.Show($"Could not open the event log: {ex.Message}", "ProcessLink",
+            System.Windows.MessageBox.Show($"Could not open the event log: {ex.Message}", "Spawn",
                 MessageBoxButton.OK, MessageBoxImage.Warning);
         }
     }
@@ -145,7 +145,7 @@ public partial class App : System.Windows.Application
         _viewModel?.Dispose();
         _monitor?.Dispose();
         _notifyIcon?.Dispose();
-        _singleInstanceMutex?.Dispose();
+        _singleInstance?.Dispose();
         base.OnExit(e);
     }
 }

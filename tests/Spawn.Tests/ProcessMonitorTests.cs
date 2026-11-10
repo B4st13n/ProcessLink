@@ -1,8 +1,8 @@
 using Xunit;
-using ProcessLink.Models;
-using ProcessLink.Services;
+using Spawn.Models;
+using Spawn.Services;
 
-namespace ProcessLink.Tests;
+namespace Spawn.Tests;
 
 public sealed class ProcessMonitorTests
 {
