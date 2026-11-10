@@ -1,17 +1,28 @@
-# Auto RELEASE on push to main; RC on PR.
-# Hypotheses: csproj already sets PublishSingleFile/self-contained win-x64; Version 0.2.0 / tag v0.2.0 → next patch.
+# Stable release on push to main: tag vX.Y.Z and a GitHub Release (prerelease=false).
+# Pull requests targeting main build the PR head, upload the exe and zip, and
+# update one PR comment with download links. They do not create a git tag or a
+# GitHub Release. Pushes to development branches do not run this workflow.
 name: Deploy
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
-    branches: [main]
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
 
 permissions:
   contents: write
   actions: read
-  pull-requests: read
+  issues: write
+  pull-requests: write
+
+# One publish at a time per branch or PR. Do not cancel a publish already in flight.
+concurrency:
+  group: deploy-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -22,67 +33,215 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Checkout pull request head
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $pr = "$env:PR_NUMBER".Trim()
+          $head = "$env:HEAD_SHA".Trim()
+          if ($pr -notmatch '^\d+$') { throw "pull request number is required" }
+          if (-not $head) { throw "pull request head sha is required" }
+          & git fetch --no-tags origin "+refs/pull/$pr/head"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & git checkout --detach FETCH_HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $got = (& git log -1 --format=%H).Trim()
+          $logCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($logCode -ne 0) { exit $logCode }
+          if (-not $got.Equals($head, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Checked out $got but the pull request head is $head"
+          }
+          Write-Host "Building pull request head $got"
+          exit 0
+
       - name: Compute version
         id: ver
         shell: pwsh
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          COMMIT_SHA: ${{ github.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
         run: |
-          # A missing tag is the stop condition for the bump loop. `git rev-parse -q --verify`
-          # exits 1 in that case. windows-latest pwsh records it in $LASTEXITCODE, and Actions
-          # appends `exit $LASTEXITCODE`, so the step fails after writing a correct version.
-          # When $PSNativeCommandUseErrorActionPreference is enabled, that same exit 1 is a
-          # terminating error. Do not fail the job merely because a candidate tag is absent.
+          # A missing tag is not a failure. windows-latest pwsh can fail the step when a
+          # git probe exits 1, and Actions may afterwards exit with $LASTEXITCODE.
+          # List tags with git tag -l, which exits 0 when nothing matches, clear any
+          # leftover native exit code, and exit 0 after writing the outputs below.
           $PSNativeCommandUseErrorActionPreference = $false
 
-          function Test-ReleaseTag([string]$Name) {
-            $null = & git rev-parse -q --verify "refs/tags/$Name" 2>$null
+          function Test-ExactTag([string]$Name) {
+            $listed = @( & git tag -l -- $Name 2>$null )
             $code = $LASTEXITCODE
             $global:LASTEXITCODE = 0
-            if ($code -eq 0) { return $true }
-            if ($code -eq 1) { return $false }
-            throw "git rev-parse failed for refs/tags/$Name with exit code $code"
+            if ($code -ne 0) { throw "git tag -l failed for $Name with exit $code" }
+            foreach ($t in $listed) {
+              if ("$t".Trim() -eq $Name) { return $true }
+            }
+            return $false
           }
 
-          git fetch --tags --force 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) { throw "git fetch --tags failed with exit code $LASTEXITCODE" }
-          $global:LASTEXITCODE = 0
-          $tags = @(git tag -l "v*.*.*" --sort=-v:refname)
-          if ($LASTEXITCODE -ne 0) { throw "git tag -l failed with exit code $LASTEXITCODE" }
-          $global:LASTEXITCODE = 0
-          $last = $null
-          foreach ($t in $tags) {
-            if ($t -match '^v(\d+)\.(\d+)\.(\d+)$') { $last = $t; break }
+          function Get-TagCommit([string]$Name) {
+            $fmt = '%(if)%(*objectname)%(then)%(*objectname)%(else)%(objectname)%(end)'
+            $out = @( & git for-each-ref "--format=$fmt" "refs/tags/$Name" 2>$null )
+            $code = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+            if ($code -ne 0) { throw "git for-each-ref failed for refs/tags/$Name with exit $code" }
+            $resolved = ("$out").Trim()
+            if (-not $resolved) { throw "refs/tags/$Name did not resolve to a commit" }
+            return $resolved
           }
-          if (-not $last) { $last = "v0.2.0" }
-          if ($last -match '^v(\d+)\.(\d+)\.(\d+)$') {
-            $maj=[int]$Matches[1]; $min=[int]$Matches[2]; $pat=[int]$Matches[3]
-          } else { $maj=0; $min=0; $pat=0 }
 
-          $isPr = "${{ github.event_name }}" -eq "pull_request"
-          # Always advance patch for the next candidate/release from last stable tag
-          $pat = $pat + 1
+          function Get-HighestStableOnCommit([string]$Sha) {
+            $listed = @( & git tag -l --points-at $Sha "v*.*.*" 2>$null )
+            $code = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+            if ($code -ne 0) { throw "git tag --points-at failed with exit $code" }
+            $best = $null
+            foreach ($t in $listed) {
+              $name = "$t".Trim()
+              if ($name -match '^v(\d+)\.(\d+)\.(\d+)$') {
+                $cand = [pscustomobject]@{
+                  Name = $name
+                  Maj = [int]$Matches[1]
+                  Min = [int]$Matches[2]
+                  Pat = [int]$Matches[3]
+                }
+                $better = $false
+                if (-not $best) { $better = $true }
+                elseif ($cand.Maj -gt $best.Maj) { $better = $true }
+                elseif ($cand.Maj -eq $best.Maj -and $cand.Min -gt $best.Min) { $better = $true }
+                elseif ($cand.Maj -eq $best.Maj -and $cand.Min -eq $best.Min -and $cand.Pat -gt $best.Pat) { $better = $true }
+                if ($better) { $best = $cand }
+              }
+            }
+            return $best
+          }
+
+          function Get-HighestStable {
+            $listed = @( & git tag -l "v*.*.*" 2>$null )
+            $code = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+            if ($code -ne 0) { throw "git tag -l v*.*.* failed with exit $code" }
+            $best = $null
+            foreach ($t in $listed) {
+              $name = "$t".Trim()
+              # Exact X.Y.Z only. v1.2.3-rc.4 matches the glob but is not stable.
+              if ($name -match '^v(\d+)\.(\d+)\.(\d+)$') {
+                $cand = [pscustomobject]@{
+                  Name = $name
+                  Maj = [int]$Matches[1]
+                  Min = [int]$Matches[2]
+                  Pat = [int]$Matches[3]
+                }
+                $better = $false
+                if (-not $best) { $better = $true }
+                elseif ($cand.Maj -gt $best.Maj) { $better = $true }
+                elseif ($cand.Maj -eq $best.Maj -and $cand.Min -gt $best.Min) { $better = $true }
+                elseif ($cand.Maj -eq $best.Maj -and $cand.Min -eq $best.Min -and $cand.Pat -gt $best.Pat) { $better = $true }
+                if ($better) { $best = $cand }
+              }
+            }
+            return $best
+          }
+
+          function Get-NextBase {
+            $highest = Get-HighestStable
+            if (-not $highest) {
+              return [pscustomobject]@{ Name = "v0.1.0"; Maj = 0; Min = 1; Pat = 0 }
+            }
+            $pat = $highest.Pat + 1
+            return [pscustomobject]@{
+              Name = "v$($highest.Maj).$($highest.Min).$pat"
+              Maj = $highest.Maj
+              Min = $highest.Min
+              Pat = $pat
+            }
+          }
+
+          function Test-CiOnlyPush([string]$Sha, [string]$Before) {
+            $zero = "0000000000000000000000000000000000000000"
+            if ($Before -and $Before -ne $zero) {
+              $diff = @( & git diff --name-only $Before $Sha 2>$null )
+            } else {
+              $diff = @( & git diff --name-only "$Sha^" $Sha 2>$null )
+            }
+            $code = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+            # git diff exits 1 when the trees differ. That is a successful probe.
+            if ($code -ne 0 -and $code -ne 1) { return $false }
+            $paths = @()
+            foreach ($p in $diff) {
+              $n = ("$p".Trim()) -replace '\\','/'
+              if ($n) { $paths += $n }
+            }
+            if ($paths.Count -eq 0) { return $false }
+            foreach ($p in $paths) {
+              if ($p -notmatch '(?i)^\.github(/|$)') { return $false }
+            }
+            return $true
+          }
+
+          & git fetch --tags --force origin 2>$null
+          $fetchCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($fetchCode -ne 0) { throw "git fetch --tags failed with exit $fetchCode" }
+
+          $isPr = "$env:EVENT_NAME" -eq "pull_request"
+          $sha = "$env:COMMIT_SHA".Trim()
+          if (-not $sha) { throw "COMMIT_SHA is empty" }
+
+          $ciOnly = $false
+          if (-not $isPr) {
+            $ciOnly = Test-CiOnlyPush $sha "$env:BEFORE_SHA".Trim()
+          }
+
           if ($isPr) {
-            $candidate = "v$maj.$min.$pat"
-            $rc = "${{ github.event.pull_request.number }}"
-            if (-not $rc) { $rc = "${{ github.run_number }}" }
-            $version = "$candidate-rc.$rc"
-            $tag = $version
-            $isRelease = "false"
+            $rc = "$env:PR_NUMBER".Trim()
+            if ($rc -notmatch '^\d+$') { throw "pull request number is required to name the RC artifact" }
+            $base = Get-NextBase
+            # Naming only. Do not create this tag or a GitHub pre-release.
+            $version = "$($base.Name)-rc.$rc"
+            $tag = ""
+            $publish = "false"
+            $prerelease = "false"
           } else {
-            $version = "v$maj.$min.$pat"
-            # Skip tags that already exist. Exit 1 (tag absent) stops the loop.
-            while (Test-ReleaseTag $version) {
-              $pat = $pat + 1
-              $version = "v$maj.$min.$pat"
+            $onSha = Get-HighestStableOnCommit $sha
+            if ($onSha) {
+              $version = $onSha.Name
+            } else {
+              $base = Get-NextBase
+              $maj = $base.Maj
+              $min = $base.Min
+              $pat = $base.Pat
+              $version = $base.Name
+              $guard = 0
+              while (Test-ExactTag $version) {
+                $tagSha = Get-TagCommit $version
+                if ($tagSha.Equals($sha, [StringComparison]::OrdinalIgnoreCase)) { break }
+                $pat++
+                $version = "v$maj.$min.$pat"
+                $guard++
+                if ($guard -gt 50) { throw "No unused stable patch found at $version" }
+              }
             }
             $tag = $version
-            $isRelease = "true"
+            $publish = "true"
+            $prerelease = "false"
+            if ($ciOnly) { $publish = "false" }
           }
-          $plain = $version.TrimStart('v')
+
+          $plain = $version.TrimStart("v")
           "VERSION=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "TAG=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "PLAIN=$plain" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          "IS_RELEASE=$isRelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
-          Write-Host "Computed VERSION=$version IS_RELEASE=$isRelease (last=$last)"
+          "publish=$publish" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "prerelease=$prerelease" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "Computed VERSION=$version TAG=$tag PLAIN=$plain publish=$publish prerelease=$prerelease ciOnly=$ciOnly"
           $global:LASTEXITCODE = 0
           exit 0
 
@@ -93,21 +252,30 @@ jobs:
 
       - name: Publish
         shell: pwsh
+        env:
+          PLAIN: ${{ steps.ver.outputs.PLAIN }}
         run: |
-          $plain = "${{ steps.ver.outputs.PLAIN }}"
+          $PSNativeCommandUseErrorActionPreference = $false
+          $plain = "$env:PLAIN".Trim()
+          if ($plain -notmatch '^(\d+\.\d+\.\d+)(-.+)?$') { throw "Unexpected version '$plain'" }
+          $numeric = $Matches[1]
+          $infoArg = @()
+          if ($plain -ne $numeric) { $infoArg = @("-p:InformationalVersion=$plain") }
           New-Item -ItemType Directory -Force -Path dist, publish | Out-Null
           dotnet restore ProcessLink.sln
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           dotnet publish src/ProcessLink/ProcessLink.csproj -c Release -r win-x64 --self-contained true `
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true `
-            -p:Version=$plain -o publish
+            -p:Version=$numeric @infoArg -o publish
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $exe = Get-ChildItem publish -Filter ProcessLink.exe | Select-Object -First 1
           if (-not $exe) { $exe = Get-ChildItem publish -Filter *.exe | Select-Object -First 1 }
           Copy-Item $exe.FullName "dist/ProcessLink-v$plain-win-x64.exe" -Force
           Compress-Archive -Path "dist/ProcessLink-v$plain-win-x64.exe" -DestinationPath "ProcessLink-v$plain.zip" -Force
+          exit 0
 
       - name: Upload Actions artifact
+        id: artifact
         uses: actions/upload-artifact@v4
         with:
           name: ProcessLink-${{ steps.ver.outputs.VERSION }}
@@ -117,8 +285,121 @@ jobs:
           if-no-files-found: error
           retention-days: ${{ github.event_name == 'pull_request' && 14 || 90 }}
 
+      - name: Comment on pull request
+        if: github.event_name == 'pull_request'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+          PLAIN: ${{ steps.ver.outputs.PLAIN }}
+          ARTIFACT_URL: ${{ steps.artifact.outputs.artifact-url }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $marker = "<!-- processlink-rc-comment -->"
+          $repo = "$env:GITHUB_REPOSITORY"
+          $pr = "$env:PR_NUMBER".Trim()
+          $version = "$env:VERSION".Trim()
+          $plain = "$env:PLAIN".Trim()
+          $sha = "$env:HEAD_SHA".Trim()
+          $branch = "$env:HEAD_REF".Trim()
+          $artifactUrl = "$env:ARTIFACT_URL".Trim()
+          $runUrl = "$env:RUN_URL".Trim()
+          if ($pr -notmatch '^\d+$') { throw "pull request number is required" }
+          if (-not $artifactUrl) { throw "artifact download URL is empty" }
+          $exe = "ProcessLink-v$plain-win-x64.exe"
+          $zip = "ProcessLink-v$plain.zip"
+          $lines = @(
+            $marker
+            ('### ProcessLink release candidate `' + $version + '`')
+            ''
+            ('Built from `' + $sha + '` on `' + $branch + '`.')
+            'This is an Actions artifact only. No git tag and no GitHub Release were created.'
+            ''
+            '**Downloads**'
+            ''
+            ('- [ProcessLink ' + $version + ' artifact](' + $artifactUrl + ') (contains the exe and the zip)')
+            ('  - `' + $exe + '`')
+            ('  - `' + $zip + '`')
+            ('- [Workflow run](' + $runUrl + ')')
+            ''
+            'Later updates to this pull request replace this comment.'
+          )
+          $body = $lines -join "`n"
+          $dir = $env:RUNNER_TEMP
+          if (-not $dir) { $dir = [System.IO.Path]::GetTempPath() }
+          $jsonPath = Join-Path $dir "processlink-rc-comment.json"
+          $utf8 = New-Object System.Text.UTF8Encoding $false
+          $json = @{ body = $body } | ConvertTo-Json -Compress
+          [System.IO.File]::WriteAllText($jsonPath, $json, $utf8)
+
+          $raw = & gh api --paginate "repos/$repo/issues/$pr/comments" --jq '.[] | select(.body | contains("<!-- processlink-rc-comment -->")) | .id'
+          $apiCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($apiCode -ne 0) { exit $apiCode }
+          $ids = @()
+          foreach ($line in @($raw)) {
+            $n = "$line".Trim()
+            if ($n -match '^\d+$') { $ids += [int64]$n }
+          }
+          if ($ids.Count -gt 0) {
+            $target = ($ids | Sort-Object | Select-Object -First 1)
+            Write-Host "Updating RC comment $target"
+            & gh api --method PATCH "repos/$repo/issues/comments/$target" --input $jsonPath | Out-Null
+          } else {
+            Write-Host "Creating RC comment"
+            & gh api --method POST "repos/$repo/issues/$pr/comments" --input $jsonPath | Out-Null
+          }
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $global:LASTEXITCODE = 0
+          exit 0
+
+      - name: Check existing GitHub Release
+        id: rel
+        if: steps.ver.outputs.publish == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.ver.outputs.TAG }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          $PSNativeCommandUseErrorActionPreference = $false
+          $tag = "$env:TAG".Trim()
+          $sha = "$env:COMMIT_SHA".Trim()
+          if (-not $tag) { throw "TAG is empty" }
+          if (-not $sha) { throw "COMMIT_SHA is empty" }
+          $listed = @( & git tag -l -- $tag 2>$null )
+          $listCode = $LASTEXITCODE
+          $global:LASTEXITCODE = 0
+          if ($listCode -ne 0) { throw "git tag -l failed for $tag with exit $listCode" }
+          $exists = $false
+          foreach ($t in $listed) {
+            if ("$t".Trim() -eq $tag) { $exists = $true }
+          }
+          $skip = "false"
+          if ($exists) {
+            $fmt = '%(if)%(*objectname)%(then)%(*objectname)%(else)%(objectname)%(end)'
+            $tagSha = @( & git for-each-ref "--format=$fmt" "refs/tags/$tag" 2>$null )
+            $refCode = $LASTEXITCODE
+            $global:LASTEXITCODE = 0
+            if ($refCode -ne 0) { throw "git for-each-ref failed for refs/tags/$tag with exit $refCode" }
+            $tagSha = ("$tagSha").Trim()
+            if (-not $tagSha.Equals($sha, [StringComparison]::OrdinalIgnoreCase)) {
+              throw "Tag $tag already points at $tagSha, not $sha. Refusing to move or replace it."
+            }
+            & gh release view $tag --repo "$env:GITHUB_REPOSITORY" 1>$null 2>$null
+            if ($LASTEXITCODE -eq 0) { $skip = "true" }
+            $global:LASTEXITCODE = 0
+          }
+          "SKIP_CREATE=$skip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host "SKIP_CREATE=$skip tag=$tag"
+          exit 0
+
       - name: Create tag and GitHub Release
-        if: steps.ver.outputs.IS_RELEASE == 'true'
+        if: steps.ver.outputs.publish == 'true' && steps.rel.outputs.SKIP_CREATE != 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.TAG }}
